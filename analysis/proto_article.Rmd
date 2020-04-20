@@ -10,14 +10,14 @@ date: '`r Sys.Date()`'
 output: 
     bookdown::word_document2:
       fig_caption: yes
-      reference_docx: "../templates/template2.docx" 
-bibliography: bibliography.bib
-csl: "../templates/cambridge-archaeological-journal.csl"
+      reference_docx: "templates/template2.docx" 
+bibliography: paper/bibliography.bib
+csl: templates/cambridge-archaeological-journal.csl
 abstract: |
   
 ---
 
-```{r, setup, echo = FALSE}
+```{r, setup, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
   warning = FALSE,
@@ -25,9 +25,31 @@ knitr::opts_chunk$set(
   echo = FALSE,
   comment = "#>",
   dpi = 300,
-  fig.width = 9,
-  fig.path = "../figures/"
+  fig.width = 7,
+  fig.ext = "tiff",
+  fig.path = "figures/"
   )
+
+# Call packages
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(knitr)
+library(tab)
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+library(RcmdrMisc)
+library(IDPmisc)
+library(forcats)
+library(kableExtra)
+library(float)
+library(janitor)
+library(ggpubr)
+library(ggExtra)
+library(ggsci)
+library(ggalluvial)
 ```
 
 
@@ -36,6 +58,14 @@ knitr::opts_chunk$set(
 The replacement of the Gravettian technocomplex by the Solutrean, impacted by adverse climatic conditions during the Heinrich event 2 (HE2), continues to be an essential topic to understand the Upper Paleolithic evolution and human adaptations to climatic changes at the end of the Pleistocene.
 
 In fact, there has been a significant amount of proposals suggesting a full synchronism between the onset of each Upper Paleolithic technocomplex and the occurrence of the most severe climate events [@cascalheiraandbicho2013; @bichoetal2017]. Bradtmöller *et al.* [-@bradtmoller2012] suggest a direct relationship between three of the HEs (4, 3 and 2) and the substitution of Neanderthal populations with the emergence of the Aurignacian, the appearance of the Gravettian, and the development of the Solutrean, respectively (Table \@ref(tab:climatetable)). Based on the theoretical framework of Panarchy [@holling2002], the authors propose the Repeated Replacement Model (RRM), where the HEs are understood as the primary climatic triggers for population turnover, through the breakdown of communication networks and cultural traditions, which were subsequently reorganized under different socio-cultural conditions [@bradtmoller2012].
+
+```{r climatetable}
+climate_table <- as_tibble(read_csv("data/Rawdata/climate_table.csv"))
+knitr::kable(climate_table,
+             digits = 2,
+             row.names = FALSE,
+             caption = "Correspondence between Upper Paleolithic cultural phases (Aurignacian, Gravettian and Solutrean), Heinrich Events and D-O cycles, with respective chronology. Following dates and chronologies from Bradtmöller et al. (2012), Cascalheira and Bicho (2013), Sanchéz-Goñi and Harrison (2010).")
+```
 
 In this framework, the rapid climatic changes brought by the HE 2 were the trigger for the reorganization of human groups after the Gravettian. Records indicate that during HEs, and with particular severity in the HE 2, western and southern Iberia must have experienced abrupt environmental changes, which altered the location, abundance and availability of resources for the communities of hunter-gatherers [@cascalheiraandbicho2013]. This led to the development of the Solutrean, marked by harsher evironmental conditions at the onset of the LGM. A technological continuum with clear succession between the two technocomplexes is seen, at least in Iberia [@bradtmoller2012], making the comprehension of these rapid climatic events of extreme importance for the understanding of human cultural change, specifically for the Proto-Solutrean and Solutrean technocomplexes.
 
@@ -142,6 +172,96 @@ The scripts used for all statistical analyses and the production of this paper c
 
 # 4 Results
 
+```{r VB_analysis_setup, include=FALSE}
+
+# Read db
+context <- read_csv("data/Rawdata/context.csv") #Field DB
+xyz <- read_csv("data/Rawdata/xyz.csv") #Field DB
+lithics <- read_csv("data/Rawdata/Basedados_VB.csv") #Analysis DB
+
+# Df cleaning and uniformizing
+cols_to_concat <- c("Unit", "ID")
+context$ID <- str_squish(context$ID) #remove empty spaces from ID field
+xyz$ID <- str_squish(xyz$ID) #remove empty spaces from UNIT field
+
+# Concatenate ID and UNIT variables in one single variable (e.g. A6-100)
+context <- context %>%
+  unite_(col='id', cols_to_concat, sep="-", remove=FALSE) %>%
+  select(id, Spit, Level, Code) %>%
+  distinct(id, .keep_all = TRUE)
+
+xyz <- xyz %>%
+  dplyr::rename(Unit = UNIT) %>%
+  unite_(col='id', cols_to_concat, sep="-", remove=FALSE) %>%
+  filter(Suffix == 0) %>%
+  select(id, X, Y, Z) %>%
+  distinct(id, .keep_all = TRUE)
+
+# Classify complete blanks (into flake or elongated) according to W and L ratio
+lithics <- lithics %>%
+  dplyr::rename(Unit = UNIT) %>%
+  unite_(col='id', cols_to_concat, sep="-", remove=FALSE) %>% 
+  mutate(elong = MaxWidth*2-Length) %>% 
+  mutate(BlankType = case_when(
+    Class == "Blank" & elong > 0 ~ "Flake",
+    Class == "Blank" & elong <= 0 ~ "ElongatedProd")) %>% 
+  as.data.frame()
+
+# Join both tables and (optionally) write csv with final result
+field_data <- full_join(xyz, context, by = "id")
+
+# Join field and lithic tables
+dataset <- left_join(lithics, field_data, by = "id")
+
+# Force transform 'dataset' into a data.frame
+dataset <- as.data.frame(dataset)
+
+# Attribute phase based on depth (Z)
+dataset <- dataset %>% 
+  mutate(Phase = case_when(
+    Z > 24.1 ~ "Upper 5/4E",
+    Z < 24.1 ~ "Lower 5"))
+
+
+```
+
+```{r lp_analysis_setup, include=FALSE}
+
+lithicslp <- read_csv("data/Rawdata/Basedados_LP.csv")
+xyzlp <- read_csv("data/Rawdata/xyzlp.csv")
+cols_to_concat <- c("UNIT", "ID")
+xyzlp$ID <- str_squish(xyzlp$ID)
+
+lithicslp <- lithicslp %>% 
+  dplyr::rename("UNIT" = "X5") %>% 
+  unite_(col='ID', cols_to_concat, sep="-", remove=FALSE)
+
+xyzlp <- xyzlp %>%
+  unite_(col='ID', cols_to_concat, sep="-", remove=FALSE) %>%
+  filter(SUFFIX == 0) %>%
+  select(ID, X, Y, Z) %>%
+  distinct(ID, .keep_all = TRUE)
+
+# Classify complete blanks (into flake or elongated) according to W and L ratio
+lithicslp <- lithicslp %>%
+  mutate(elong = MaxWidth*2-Length) %>% 
+  mutate(BlankType = case_when(
+    Class == "Blank" & elong > 0 ~ "Flake",
+    Class == "Blank" & elong <= 0 ~ "ElongatedProd")) %>% 
+  select(-elong)
+
+datasetlp <- left_join(lithicslp, xyzlp, by = "ID")
+
+datasetlp <- as.data.frame(datasetlp)
+
+# Attribute phase based on depth (Z)
+datasetlp <- datasetlp %>% 
+  mutate(Phase = case_when(
+    Z >= 566.9 | Level == "T1" | Level == "T2" | Level == "T3" | Level == "T4" | Level == "T5" ~ "Middle T",
+    Z < 566.9 | Level == "T6" | Level == "T7" | Level == "T8" | Level == "U" | Level == "U1" ~ "U/Lower T"))
+
+```
+
 ## 4.1 Vale Boi
 
 ### 4.1.1 Assemblage and raw materials
@@ -150,7 +270,117 @@ Given the possible existence of two phases within the Proto-Solutrean occupation
 
 This shift seems to be associated with other significant changes in the Terrace sequence, such as an increase in the amount of lithic materials in top of Layer 5 and Layer 4E, but also the appearance of Vale Comprido technology. Additionally, these two moments are stratigraphically correlated with two different chronological horizons, the first, dated to c. 26 ka cal BP, at c. 23.9 m depth, and associated with higher frequencies of quartz, and the second, dated to c. 24.7 ka cal BP, at around 24.1 m depth, associated with higher frequencies of chert and a reduction in quartz presence.
 
-(rmdispersion)
+```{r rmdispersion, fig.cap = "Vale Boi. Raw material discard rates over time. Each point is an excavation unit (spit). The lines are locally weighted regression lines (span ¼ 0.4) to aid in visualising the trend of increased discard in the upper part of the deposit.", echo = FALSE, message=FALSE, warning=FALSE}
+
+# Calulate spit volumes
+cols_to_concat <- c("Level", "Spit")
+
+buckets_by_spit <- context %>%
+  filter(Level %in% c("4E", "5", "5B", "5C") & Code == "BUCKET" & !Spit %in% c("limp_corte", "profile", " ", NA)) %>%
+  unite_(col='depth', cols_to_concat, sep=".", remove=FALSE)
+
+buckets_by_spit$depth <- str_replace(buckets_by_spit$depth, "B", "")
+buckets_by_spit$depth <- str_replace(buckets_by_spit$depth, "C", "")
+
+spit_vol <- buckets_by_spit %>%
+  dplyr::group_by(depth) %>%
+  dplyr::count(Code) %>%
+  mutate(spit_vol = (n*10)/1000)
+
+# Calculate average depth of spits
+
+spit_depths <- field_data %>%
+  filter(Level %in% c("4E", "5", "5B", "5C") & !Spit %in% c("limp_corte", "LIMP_CORTE", "profile", " ", NA, "0")) %>%
+  unite_(col='depth', cols_to_concat, sep=".", remove=FALSE)
+
+spit_depths$depth <- str_replace(spit_depths$depth, "B", "")
+spit_depths$depth <- str_replace(spit_depths$depth, "C", "")
+
+spit_aver_depths <- spit_depths %>%
+  dplyr::group_by(depth) %>%
+  dplyr::summarise(avg = mean(Z)) %>%
+  mutate_if(is.numeric, format, 3)
+
+## Data classes per spit
+
+cols_to_concat <- c("Level.y", "Spit")
+
+lithics_by_spit <- dataset %>%
+  filter(Level.y %in% c("4E", "5", "5B", "5C") & !Spit %in% c("limp_corte", "profile", " ", NA)) %>%
+  select(id, Z, Spit, Level.y, Code, Class, ChipQuantity, RetouchedPieceTypology, PieceCompleteness, RawMaterial) %>%
+  unite_(col='depth', cols_to_concat, sep=".", remove=FALSE)
+
+lithics_by_spit$depth <- str_replace(lithics_by_spit$depth, "B", "")
+lithics_by_spit$depth <- str_replace(lithics_by_spit$depth, "C", "")
+
+#Debitage by spit
+
+cols_to_concat <- c("Level.y", "Spit")
+
+rm_by_spit <- dataset %>%
+  filter(Level.y %in% c("4E", "5", "5B", "5C") & !Spit %in% c("limp_corte", "profile", " ", NA)) %>%
+  select(id, Z, Spit, Level.y, Code, RawMaterial, QuartzQuality, Class) %>%
+  unite_(col='depth', cols_to_concat, sep=".", remove=FALSE) %>% 
+  filter(Class %in% c("Blank","Core","RetouchedPiece"))
+
+rm_by_spit$depth <- str_replace(rm_by_spit$depth, "B", "")
+rm_by_spit$depth <- str_replace(rm_by_spit$depth, "C", "")
+
+rm_by_spit <- rm_by_spit %>% 
+  dplyr::group_by(depth) %>%
+  dplyr::count(RawMaterial) %>%
+  mutate(freq = n / sum(n)*100)
+
+quartz_by_spit <- rm_by_spit %>%
+  filter(RawMaterial == "Quartz")
+
+chert_by_spit <- rm_by_spit %>% 
+  filter(RawMaterial == "Chert")
+
+grey_by_spit <- rm_by_spit %>% 
+  filter(RawMaterial == "Greywacke")
+
+quartz_by_spit$spit_vol <- spit_vol$spit_vol[match(quartz_by_spit$depth, spit_vol$depth)]
+quartz_by_spit <- quartz_by_spit %>%
+  mutate(artifacts_by_cubic_meter = n/spit_vol)
+quartz_by_spit$spit_aver_depth <- spit_aver_depths$avg[match(quartz_by_spit$depth, spit_aver_depths$depth)]
+quartz_by_spit$spit_aver_depth <- as.numeric(as.character(quartz_by_spit$spit_aver_depth))
+
+chert_by_spit$spit_vol <- spit_vol$spit_vol[match(chert_by_spit$depth, spit_vol$depth)]
+chert_by_spit <- chert_by_spit %>%
+  mutate(artifacts_by_cubic_meter = n/spit_vol)
+chert_by_spit$spit_aver_depth <- spit_aver_depths$avg[match(chert_by_spit$depth, spit_aver_depths$depth)]
+chert_by_spit$spit_aver_depth <- as.numeric(as.character(chert_by_spit$spit_aver_depth))
+
+grey_by_spit$spit_vol <- spit_vol$spit_vol[match(grey_by_spit$depth, spit_vol$depth)]
+grey_by_spit <- grey_by_spit %>%
+  mutate(artifacts_by_cubic_meter = n/spit_vol)
+grey_by_spit$spit_aver_depth <- spit_aver_depths$avg[match(grey_by_spit$depth, spit_aver_depths$depth)]
+grey_by_spit$spit_aver_depth <- as.numeric(as.character(grey_by_spit$spit_aver_depth))
+
+rm_by_cubic_meter <- bind_rows(quartz_by_spit, chert_by_spit, grey_by_spit)
+
+rm_by_cubic_meter <- filter(rm_by_cubic_meter, spit_vol > 0.10) # removes low volumetric levels
+
+
+# Plot
+
+rm_cubic_meter <- ggplot(rm_by_cubic_meter, (aes(spit_aver_depth, freq, colour = RawMaterial))) +
+  geom_point() +
+  stat_smooth(span = 0.5, se = FALSE) +
+  xlab("Depth (m)") +
+  ylab("Artefact relative frequency by cubic meter of sediment (log10)") +
+  theme(axis.text=element_text(size=12),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        legend.text = element_text(size= 12),
+        legend.title = element_text(size = 14)) +
+  scale_y_log10()+
+  coord_flip() +
+  scale_color_jco()
+
+rm_cubic_meter
+```
 
 Given the chronological data, density of artifacts, and raw material preference patterns, it was decided that for this study the materials would be subdivided in two analytical units, to better understand any possible technological differences: **Lower 5**, including all artifacts with Z values under 24.1; **Upper 5/4E**, including all artifacts with Z values of 24.1 and above. The value 24.1 is arbitrary and was chosen for the reasons aforementioned: it seems to be where the separation between higher and lower densities of lithic materials occurs and, also, where the inversion of quartz and chert frequencies happens.
 
@@ -162,7 +392,30 @@ During the analysis, 167 retouched pieces were identified, 55 on Lower 5, repres
 
 One of the most relevant raw materials in both of Vale Boi's analytical units used for this study is quartz (encompassing rock crystal, fine, medium and coarse qualities), which represents c. 43% of the total assemblage for the Upper 5/4E group, and c. 51% for Lower 5. Chert, on the other hand, represents c. 46% of the Upper 5/4E phase and 38% of the Lower 5. Finally, greywacke, dolerite, chalcedony, and other raw materials that due to their low frequencies were collapsed in the category “Other”, together represent c. 11% of both assemblages (Figure \@ref(fig:rmvb)).
 
-(raw material graph)
+```{r rmvb, fig.cap="Vale Boi. Frequencies of raw materials by phase. Chips and shatters not included.", echo=FALSE}
+
+dfRM_vb <- dataset %>% 
+  filter(Class!="Chip") %>% 
+  filter(Class!="Shatter") %>% 
+  drop_na(Phase)
+
+dfRM_vb %>%
+  mutate(RawMaterial = factor(RawMaterial, levels = c("Quartz","Chert","Greywacke","Dolerite","Chalcedony","Other"))) %>%
+  dplyr::group_by(Phase, RawMaterial) %>% 
+  dplyr::summarise(n = n()) %>%
+  mutate(percent = n/sum(n)) %>% 
+  ggplot(aes(x=Phase, y = percent, fill = RawMaterial)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal() + #type of theme
+  labs(x = "Phases", y = NULL) +# change labels
+  guides(fill=guide_legend(title=NULL)) + # remove legend title
+  geom_text(aes(label=ifelse(percent >= 0.07, paste0(sprintf("%.0f", percent*100),"%"),"")),
+                position=position_stack(vjust=0.5), colour="white") +
+  theme(axis.title.x = element_text(size = 10, vjust = -1)) +
+  scale_fill_jco()
+
+```
 
 The number of chips and shatter in quartz are, as seen in Tables \@ref(tab:general1) and \@ref(tab:general2), extremely high, both in its representativity within the raw material, with c. 94% for both Lower 5 and Upper 5/4E, and when compared to the relative frequencies of other raw materials.
 
@@ -202,7 +455,60 @@ Flakes have mostly plain platforms, although for certain raw materials, like qua
 
 A total of 219 elongated products were recorded in the Vale Boi's assemblages. 82 of these blanks are from Lower 5, while 137 are from the Upper 5/4E group. Comparatively to the whole group of blanks, there is a more significant number of chert pieces (n=106), this number only changing in Lower 5, where quartz elongated blank numbers (n=44) supersede chert ones (n=31). Figures \@ref(fig:elongdisp1) and \@ref(fig:elongdisp2) show the scatterplots for width and length of elongated blanks of the two main raw materials present at both phases identified at Vale Boi. Following the traditional subdivision between blade and bladelet, both charts clearly show that the main goal of the reduction sequences for elongated products were bladelets. Only in the Upper 5/4E group, there seems to be a bimodal distribution in the width variable for chert artifacts.
 
-(two dispersion graphs)
+
+```{r fishertestelongVB, include=FALSE}
+
+elongAT <- dataset %>% 
+  filter(BlankType=="ElongatedProd")
+
+elong_groups_AT2 <- elongAT %>% 
+  mutate(elong_group = case_when(MedWidth < 12.5 ~ "Bladelet",
+                                  MedWidth >= 12.5 ~ "Blade")) %>% 
+  filter(RawMaterial == "Chert" & Phase == "Upper 5/4E")
+
+
+plat <- fisher.test(table(elong_groups_AT2$PlatformType, elong_groups_AT2$elong_group))
+prof <- fisher.test(table(elong_groups_AT2$Profile, elong_groups_AT2$elong_group))
+cross <- fisher.test(table(elong_groups_AT2$CrossSection, elong_groups_AT2$elong_group))
+shape <- fisher.test(table(elong_groups_AT2$BlankShape, elong_groups_AT2$elong_group))
+
+```
+
+```{r elongdisp1, fig.cap="Vale Boi - Lower 5. Elongated products width and length dispersion by raw material.", echo=FALSE}
+elongAT1 <- elongAT %>% 
+  filter(Phase=="Lower 5") 
+elong_disp1 <- elongAT1 %>% 
+  filter(RawMaterial %in% c("Chert","Quartz")) %>% 
+  mutate(RawMaterial = factor(RawMaterial, levels = c("Quartz",
+                                                    "Chert", "Greywacke")))
+disp_1 <- ggplot(elong_disp1, aes(MedWidth, Length, color = RawMaterial)) +
+  geom_point() +
+  theme_minimal() + #type of theme
+  labs(x = "Width (mm)", y = "Length (mm)") + # change labels
+  theme(axis.title = element_text(size = 10, vjust = -1), legend.position="bottom") +
+  labs(color = "Raw Material") + # x axis size
+  scale_color_jco() + # set colours
+  geom_smooth(method = "lm", se = FALSE)
+ggMarginal(disp_1, type = "density", groupColour = TRUE, groupFill = TRUE)
+```
+
+```{r elongdisp2,fig.cap="Vale Boi - Upper 5/4E. Elongated product width and length dispersion by raw material.", echo=FALSE}
+elongAT2 <- elongAT %>% 
+  filter(Phase=="Upper 5/4E")
+elong_disp2 <- elongAT2 %>% 
+  filter(RawMaterial %in% c("Chert","Quartz")) %>% 
+  mutate(RawMaterial = factor(RawMaterial, levels = c("Quartz",
+                                                      "Chert", "Greywacke")))
+disp_2 <- ggplot(elong_disp2, aes(MedWidth, Length, color = RawMaterial)) +
+  geom_point() +
+  theme_minimal() + #type of theme
+  labs(x = "Width (mm)", y = "Length (mm)") + # change labels
+  theme(axis.title = element_text(size = 10, vjust = -1), legend.position="bottom") +
+  labs(color = "Raw Material") + # x axis size
+  scale_color_jco() +  # set colours
+  geom_smooth(method = "lm", se = FALSE)
+ggMarginal(disp_2, type = "density", groupColour = TRUE, groupFill = TRUE)
+```
 
 Elongated blanks have mostly parallel and convergent shapes, on both phases, although Lower 5 shows significant differences across the different raw materials, since c. 64% of quartz has parallel shapes, whereas c. 52% of chert has convergent ones. Cross sections are mostly triangular, with straight and curved profiles. Differences in profile types are rather significant between both phases, but only for quartz artifacts. While in Lower 5, quartz elongated blanks present a percentage of curved profiles of c. 23%, in Upper 5/4E, this percentage drops to c. 12%. Curved and twisted profiles in bladelets are usually associated with the exploitation of carinated cores, particularly in the Gravettian-Solutrean transition as presented by @almeida2000 for the Terminal Gravettian of Estremadura. Although no carinated cores were identified in the Lower 5 assemblage, the presence of a significant number of bladelets with curved profiles might indicate the use of such a type of reduction strategy.
 
@@ -264,7 +570,55 @@ A total of 47 elongated blanks were recorded for Lapa do Picareiro. U/Lower T ph
 
 When plotting width and length for elongated blanks, for chert and quartz, there seem to be two groups of different dimensions in both phases. Concerning the U/Lower T (Figure \@ref(fig:elongdisp1LP)), there is a group of smaller blanks, ranging between 2-10 mm of width and 5-25 mm of length, thus falling into the traditional category of bladelet, and a group that although more disperse is composed mostly of chert, with width and length ranging between 13-26 mm and 40-60 mm, respectively, and that may be classified, according to the traditional definition, as blades.
 
-(two length/width dispersions)
+```{r elongdisp1LP, fig.cap="Lapa do Picareiro - U/Lower T. Elongated product width and length dispersion by raw material.", echo=FALSE}
+
+elongATlp <- datasetlp %>% 
+  filter(BlankType=="ElongatedProd")
+
+elongAT1lp <- elongATlp %>% 
+  filter(Phase=="U/Lower T") 
+
+elong_disp1_LP <- elongAT1lp %>% 
+  filter(RawMaterial %in% c("Chert","Quartz")) %>% 
+  mutate(RawMaterial = factor(RawMaterial, levels = c("Quartz",
+                                                      "Chert")))
+
+disp_1_LP <- ggplot(elong_disp1_LP, aes(MedWidth, Length, color = RawMaterial)) +
+  geom_point() +
+  theme_minimal() + #type of theme
+  labs(x = "Width", y = "Length") + # change labels
+  theme(axis.title = element_text(size = 10, vjust = -1), legend.position="bottom") +
+  labs(color = "Raw Material") + # x axis size
+  scale_color_jco()  + # set colours
+  geom_smooth(method = "lm", se = FALSE)
+
+ggMarginal(disp_1_LP, type = "density", groupColour = TRUE, groupFill = TRUE)
+
+
+```
+
+```{r elongdisp2LP,fig.cap="Lapa do Picareiro - Middle T. Elongated product width and length dispersion by raw material.", echo=FALSE}
+
+elongAT2lp <- elongATlp %>% 
+  filter(Phase=="Middle T")
+
+elong_disp2_LP <- elongAT2lp %>% 
+  filter(RawMaterial %in% c("Chert","Quartz","Greywacke")) %>% 
+  mutate(RawMaterial = factor(RawMaterial, levels = c("Quartz",
+                                                      "Chert", "Greywacke")))
+
+disp_2_LP <- ggplot(elong_disp2_LP, aes(MedWidth, Length, color = RawMaterial)) +
+  geom_point() +
+  theme_minimal() + #type of theme
+  labs(x = "Width", y = "Length") + # change labels
+  theme(axis.title = element_text(size = 10, vjust = -1), legend.position="bottom") +
+  labs(color = "Raw Material") + # x axis size
+  scale_color_jco() + # set colours
+  geom_smooth(method = "lm", se = FALSE)
+
+ggMarginal(disp_2_LP, type = "density", groupColour = TRUE, groupFill = TRUE)
+
+```
 
 For the Middle T (Figure \@ref(fig:elongdisp2LP)), there is also a group of smaller blanks, with widths ranging from 3 to 10 mm, and highly variable length values, ranging from between 5 to 30 mm, from which the higher values represent mostly chert artifacts. Even so, these pieces may be characterized through the traditional classification as bladelets. The second group is made up entirely of chert, although it has fewer blanks and is very disperse in terms of width (>15 mm), and length (>45 mm), and thus classified as blades.
 
@@ -361,20 +715,3 @@ Assessing these patterns is important to understand a link that seems to be miss
 I would like to express my sincere gratitude to Doctor João Cascalheira for the continuous help, support and orientation throughout the process of this research, which has been utterly defining and important in my career. Doctor Célia Gonçalves for the support, help and final corrections to the document. ICArEHB, for the opportunity given to study Vale Boi and Lapa do Picareiro's materials, as they have been a defining subject in my growth as a researcher. As such, I would like to thank Doctor Nuno Bicho and Doctor Jonathan Haws.
 
 # References
-
-### Colophon
-
-This report was generated on `r Sys.time()` using the following computational environment and dependencies: 
-
-```{r colophon, cache = FALSE}
-# which R packages and versions?
-devtools::session_info()
-```
-
-The current Git commit details are:
-
-```{r}
-# what commit is this file at? You may need to change the path value
-# if your Rmd is not in analysis/paper/
-git2r::repository("../..")
-```
